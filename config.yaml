@@ -1,0 +1,53 @@
+# Kalshi Best Bets Configuration
+
+# Scraping settings
+scraping:
+  headless: true
+  screenshot_on_error: false
+  timeout: 30
+  wait_time: 3
+
+# EV calculation settings
+ev:
+  min_ev: 0.02  # Minimum EV to include in results
+  share_factor: 0.5  # Expected payout factor for shared championships
+  top_bets: 20  # Number of top bets to display
+
+# Kalshi API settings
+kalshi:
+  base_url: "https://api.elections.kalshi.com/trade-api/v2"
+  # Production credentials loaded from environment variables
+  # KALSHI_KEY_ID: API key UUID
+  # KALSHI_PRIVATE_KEY_PATH: Path to private key file
+  # KALSHI_BASE_URL: Production API URL
+
+# Output settings
+output:
+  timezone: "America/Chicago"
+  date_format: "%Y-%m-%d"
+  
+# Conference mappings (also defined in conference_map.yaml)
+conferences:
+  - "Big Ten"
+  - "SEC"
+  - "Big 12"
+  - "Mountain West Conference"
+  - "Big East"
+  - "ACC"
+  - "West Coast Conference"
+  - "Atlantic 10 Conference"
+  - "American Athletic Conference"
+
+# Market titles to match exactly
+market_titles:
+  make_tournament: "Men's March Madness Round of 64 Qualifiers"
+  conference_champions:
+    - "Big Ten Regular Season Champion"
+    - "SEC Regular Season Champion"
+    - "Big 12 Regular Season Champion"
+    - "Mountain West Conference Regular Season Champion"
+    - "Big East Regular Season Champion"
+    - "ACC Regular Season Champion"
+    - "West Coast Conference Regular Season Champion"
+    - "Atlantic 10 Conference Regular Season Champion"
+    - "American Athletic Conference Regular Season Champion"

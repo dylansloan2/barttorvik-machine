@@ -1,0 +1,11 @@
+# Conference name to BartTorvik code mappings
+conferences:
+  "Big Ten": "B10"
+  "SEC": "SEC"
+  "Big 12": "B12"
+  "Mountain West Conference": "MWC"
+  "Big East": "BE"
+  "ACC": "ACC"
+  "West Coast Conference": "WCC"
+  "Atlantic 10 Conference": "A10"
+  "American Athletic Conference": "AAC"
