@@ -28,15 +28,15 @@ install:
 # Run the bot
 run:
 	@echo "Running Kalshi Best Bets..."
-	python3 src/main.py
+	python3 main.py
 
 # Run with specific date
 run-today:
-	python3 src/main.py --verbose
+	python3 main.py --verbose
 
 # Run with dry run mode
 dry-run:
-	python3 src/main.py --dry-run --verbose
+	python3 main.py --dry-run --verbose
 
 # Run tests
 test:
@@ -84,12 +84,12 @@ schedule:
 	@echo "Installing cron job for daily execution at 10:30 AM America/Chicago..."
 	@echo "Note: This requires sudo privileges"
 	@echo "Adding the following cron job:"
-	@echo "30 10 * * * cd $(PWD) && /usr/bin/python3 src/main.py >> $(PWD)/logs/cron.log 2>&1"
-	@echo ""
-	@echo "To install manually, run:"
-	@echo "sudo crontab -e"
-	@echo "And add this line:"
-	@echo "30 10 * * * cd $(PWD) && /usr/bin/python3 src/main.py >> $(PWD)/logs/cron.log 2>&1"
+	@echo "	30 10 * * * cd $(PWD) && /usr/bin/python3 main.py >> $(PWD)/logs/cron.log 2>&1"
+		@echo ""
+		@echo "To install manually, run:"
+		@echo "sudo crontab -e"
+		@echo "And add this line:"
+		@echo "30 10 * * * cd $(PWD) && /usr/bin/python3 main.py >> $(PWD)/logs/cron.log 2>&1"
 	@echo ""
 	@echo "Or use systemd timer (recommended):"
 	@echo "make install-systemd-timer"

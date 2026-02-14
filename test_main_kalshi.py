@@ -3,11 +3,7 @@
 Test the main Kalshi API with real credentials
 """
 
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
-from src.kalshi.kalshi_client import KalshiClient
+from kalshi.kalshi_client import KalshiClient
 
 def test_main_kalshi_api():
     """Test the main Kalshi API with authentication"""

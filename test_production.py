@@ -3,11 +3,9 @@
 Test the production Kalshi API setup
 """
 
-import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from src.kalshi.kalshi_client import KalshiClient
+from kalshi.kalshi_client import KalshiClient
 
 def test_production_setup():
     """Test the production Kalshi API setup"""

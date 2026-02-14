@@ -45,4 +45,4 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Default command
-CMD ["python3", "src/main.py", "--help"]
+CMD ["python3", "main.py", "--help"]
