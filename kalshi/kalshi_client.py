@@ -1,5 +1,4 @@
 import os
-import re
 import time
 import logging
 import base64
@@ -23,6 +22,9 @@ CONFERENCE_SERIES_MAP = {
     "Big Ten": "KXBIG10REG",
     "Big East": "KXBIGEASTREG",
     "West Coast Conference": "KXWCCREG",
+    "Mountain West Conference": "KXMWREG",
+    "Atlantic 10 Conference": "KXA10REG",
+    "American Athletic Conference": "KXAACREG",
 }
 
 
