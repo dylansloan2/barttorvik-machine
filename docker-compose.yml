@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  kalshi-bets:
+    build: .
+    container_name: kalshi-best-bets
+    volumes:
+      - ./out:/app/out
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    
+  # Optional: Add a cron service for scheduled runs
+  kalshi-bets-scheduler:
+    build: .
+    container_name: kalshi-best-bets-scheduler
+    volumes:
+      - ./out:/app/out
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    # Run daily at 10:30 AM America/Chicago (11:30 AM UTC during standard time, 10:30 AM UTC during daylight time)
+    command: >
+      sh -c "
+      while true; do
+        # Run at 11:30 AM UTC (adjust for daylight saving as needed)
+        current_hour=$$(date -u +%H)
+        current_minute=$$(date -u +%M)
+        if [ $$current_hour -eq 11 ] && [ $$current_minute -eq 30 ]; then
+          echo 'Running scheduled Kalshi Best Bets...'
+          python3 src/main.py --verbose
+        fi
+        sleep 60
+      done
+      "
+    depends_on:
+      - kalshi-bets
