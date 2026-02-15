@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -11,6 +12,13 @@ from passlib.hash import pbkdf2_sha256
 from pydantic import BaseModel
 import jwt
 import requests
+
+from app.scraper import (
+    scrape_tourneycast,
+    scrape_all_conferences,
+    scrape_schedule,
+    BARTTORVIK_CONF_CODES,
+)
 
 app = FastAPI()
 
@@ -44,7 +52,28 @@ CONFERENCE_SERIES_MAP = {
     "American Athletic Conference": "KXAACREG",
 }
 
+TEAM_NAME_MAP = {
+    "N.C. State": "NC State",
+    "Mississippi": "Ole Miss",
+    "Miami FL": "Miami",
+    "St. John's": "St Johns",
+    "Saint Mary's": "Saint Marys",
+    "Loyola Chicago": "Loyola-Chicago",
+    "UConn": "Connecticut",
+    "UCONN": "Connecticut",
+    "USC": "Southern California",
+    "UCF": "Central Florida",
+    "SMU": "Southern Methodist",
+    "VCU": "Virginia Commonwealth",
+    "BYU": "Brigham Young",
+    "LSU": "Louisiana State",
+    "UNLV": "Nevada-Las Vegas",
+    "UNC": "North Carolina",
+    "TCU": "Texas Christian",
+}
+
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 
@@ -53,7 +82,7 @@ class Token(BaseModel):
     token_type: str
 
 
-def create_access_token(data: dict, expires_delta: timedelta = None):
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
@@ -73,7 +102,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-def kalshi_get(path: str, params: dict = None) -> Optional[dict]:
+def kalshi_get(path: str, params: Optional[dict] = None) -> Optional[dict]:
     url = KALSHI_BASE_URL + path
     max_retries = 3
     for attempt in range(max_retries):
@@ -110,6 +139,64 @@ def fetch_markets_by_series(series_ticker: str) -> list:
     return all_markets
 
 
+def normalize_team_name(name: str) -> str:
+    name = name.strip()
+    name = name.replace(".", "").replace("'", "").replace("\u2019", "")
+    name = name.replace("-", " ").replace("  ", " ")
+    return name.lower().strip()
+
+
+def match_team_name(kalshi_name: str, bt_teams: dict) -> Optional[str]:
+    if kalshi_name in bt_teams:
+        return kalshi_name
+
+    mapped = TEAM_NAME_MAP.get(kalshi_name)
+    if mapped and mapped in bt_teams:
+        return mapped
+
+    for bt_name in bt_teams:
+        mapped_bt = TEAM_NAME_MAP.get(bt_name)
+        if mapped_bt and mapped_bt == kalshi_name:
+            return bt_name
+
+    kalshi_norm = normalize_team_name(kalshi_name)
+    for bt_name in bt_teams:
+        bt_norm = normalize_team_name(bt_name)
+        if kalshi_norm == bt_norm:
+            return bt_name
+        if kalshi_norm in bt_norm or bt_norm in kalshi_norm:
+            return bt_name
+
+    return None
+
+
+def match_conf_team(kalshi_name: str, conf_teams: list) -> Optional[dict]:
+    for t in conf_teams:
+        if t["team"] == kalshi_name:
+            return t
+
+    mapped = TEAM_NAME_MAP.get(kalshi_name)
+    if mapped:
+        for t in conf_teams:
+            if t["team"] == mapped:
+                return t
+
+    kalshi_norm = normalize_team_name(kalshi_name)
+    for t in conf_teams:
+        bt_norm = normalize_team_name(t["team"])
+        if kalshi_norm == bt_norm:
+            return t
+        if kalshi_norm in bt_norm or bt_norm in kalshi_norm:
+            return t
+
+    for t in conf_teams:
+        mapped_bt = TEAM_NAME_MAP.get(t["team"])
+        if mapped_bt and normalize_team_name(mapped_bt) == kalshi_norm:
+            return t
+
+    return None
+
+
 def parse_market(m: dict, market_type: str, conference: str) -> Optional[dict]:
     team_name = m.get("yes_sub_title", "")
     if not team_name:
@@ -140,35 +227,122 @@ def parse_market(m: dict, market_type: str, conference: str) -> Optional[dict]:
         "last_price": last_price,
         "volume": volume,
         "implied_prob": round(mid_price, 4),
+        "bt_probability": 0.0,
+        "ev": 0.0,
+        "bt_source": "",
+        "share_prob": 0.0,
+        "sole_prob": 0.0,
     }
 
 
 _cache: dict = {}
 CACHE_TTL = 300
+BT_CACHE_TTL = 1800
+_scrape_lock = threading.Lock()
+
+
+def _scrape_barttorvik():
+    now = time.time()
+    if "bt_tourney" in _cache and now - _cache.get("bt_time", 0) < BT_CACHE_TTL:
+        return
+
+    logger.info("Starting BartTorvik scrape...")
+    try:
+        tourney_data = scrape_tourneycast()
+        _cache["bt_tourney"] = tourney_data
+        logger.info("Scraped %d teams from tourneycast", len(tourney_data))
+    except Exception as e:
+        logger.error("Failed to scrape tourneycast: %s", e)
+        if "bt_tourney" not in _cache:
+            _cache["bt_tourney"] = {}
+
+    try:
+        date_str = datetime.now().strftime("%Y%m%d")
+        conf_data = scrape_all_conferences(date_str)
+        _cache["bt_conferences"] = conf_data
+        logger.info("Scraped %d conferences from concast", len(conf_data))
+    except Exception as e:
+        logger.error("Failed to scrape conferences: %s", e)
+        if "bt_conferences" not in _cache:
+            _cache["bt_conferences"] = {}
+
+    try:
+        schedule_data = scrape_schedule()
+        _cache["bt_schedule"] = schedule_data
+        logger.info("Scraped %d games from schedule", len(schedule_data))
+    except Exception as e:
+        logger.error("Failed to scrape schedule: %s", e)
+        if "bt_schedule" not in _cache:
+            _cache["bt_schedule"] = []
+
+    _cache["bt_time"] = time.time()
+    logger.info("BartTorvik scrape complete")
 
 
 def get_cached_bets() -> list:
     now = time.time()
-    if "bets" in _cache and now - _cache["bets_time"] < CACHE_TTL:
+    if "bets" in _cache and now - _cache.get("bets_time", 0) < CACHE_TTL:
         return _cache["bets"]
+
+    with _scrape_lock:
+        _scrape_barttorvik()
+
+    bt_tourney = _cache.get("bt_tourney", {})
+    bt_conferences = _cache.get("bt_conferences", {})
 
     all_bets: list = []
 
     raw = fetch_markets_by_series(MAKE_TOURNAMENT_SERIES)
     for m in raw:
         parsed = parse_market(m, "Make Tournament", "March Madness")
-        if parsed:
-            all_bets.append(parsed)
+        if not parsed:
+            continue
+
+        bt_match = match_team_name(parsed["team_name"], bt_tourney)
+        if bt_match and bt_match in bt_tourney:
+            bt_data = bt_tourney[bt_match]
+            bt_prob = bt_data["in_probability"]
+            parsed["bt_probability"] = round(bt_prob, 4)
+            parsed["bt_source"] = f"BT: {bt_data['team']} ({bt_data['conference']})"
+
+            cost = parsed["yes_ask"] if parsed["yes_ask"] > 0 else parsed["yes_price"]
+            if cost > 0:
+                parsed["ev"] = round(bt_prob * 1.0 - cost, 4)
+
+        all_bets.append(parsed)
 
     for conf, series in CONFERENCE_SERIES_MAP.items():
         time.sleep(0.3)
         raw = fetch_markets_by_series(series)
+        bt_conf_teams = bt_conferences.get(conf, [])
+
         for m in raw:
             parsed = parse_market(m, "Conference Champion", conf)
-            if parsed:
-                all_bets.append(parsed)
+            if not parsed:
+                continue
 
-    all_bets.sort(key=lambda x: x["implied_prob"], reverse=True)
+            bt_match = match_conf_team(parsed["team_name"], bt_conf_teams)
+            if bt_match:
+                sole_prob = bt_match["sole_probability"]
+                share_prob = bt_match["share_probability"]
+                share_only_prob = share_prob - sole_prob
+
+                effective_prob = sole_prob * 1.0 + share_only_prob * 0.5
+                parsed["bt_probability"] = round(share_prob, 4)
+                parsed["bt_source"] = (
+                    f"BT: {bt_match['team']} "
+                    f"(Share: {share_prob*100:.1f}%, Sole: {sole_prob*100:.1f}%)"
+                )
+                parsed["share_prob"] = round(share_prob, 4)
+                parsed["sole_prob"] = round(sole_prob, 4)
+
+                cost = parsed["yes_ask"] if parsed["yes_ask"] > 0 else parsed["yes_price"]
+                if cost > 0:
+                    parsed["ev"] = round(effective_prob - cost, 4)
+
+            all_bets.append(parsed)
+
+    all_bets.sort(key=lambda x: x["ev"], reverse=True)
 
     _cache["bets"] = all_bets
     _cache["bets_time"] = now
@@ -206,11 +380,27 @@ async def get_bets(user: str = Depends(get_current_user)):
     for b in conference:
         conf_grouped.setdefault(b["conference"], []).append(b)
 
+    best_ev = sorted(
+        [b for b in bets if b["ev"] > 0],
+        key=lambda x: x["ev"],
+        reverse=True,
+    )[:20]
+
+    bt_status = {
+        "tourney_teams": len(_cache.get("bt_tourney", {})),
+        "conferences_scraped": list(_cache.get("bt_conferences", {}).keys()),
+        "schedule_games": len(_cache.get("bt_schedule", [])),
+        "last_scrape": _cache.get("bt_time", 0),
+    }
+
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "total_markets": len(bets),
         "make_tournament": make_tourney,
         "conference_markets": conf_grouped,
+        "best_ev_bets": best_ev,
+        "bt_status": bt_status,
+        "schedule": _cache.get("bt_schedule", []),
     }
 
 
@@ -220,15 +410,22 @@ async def get_summary(user: str = Depends(get_current_user)):
     make_tourney = [b for b in bets if b["market_type"] == "Make Tournament"]
     conference = [b for b in bets if b["market_type"] == "Conference Champion"]
 
-    top_favorites = sorted(make_tourney, key=lambda x: x["implied_prob"], reverse=True)[:10]
-    top_underdogs = sorted(
-        [b for b in make_tourney if b["implied_prob"] > 0],
-        key=lambda x: x["implied_prob"],
+    best_ev = sorted(
+        [b for b in bets if b["ev"] > 0],
+        key=lambda x: x["ev"],
+        reverse=True,
+    )[:10]
+
+    worst_ev = sorted(
+        [b for b in bets if b["ev"] < 0 and b["bt_probability"] > 0],
+        key=lambda x: x["ev"],
     )[:10]
 
     conf_counts: dict = {}
     for b in conference:
         conf_counts[b["conference"]] = conf_counts.get(b["conference"], 0) + 1
+
+    matched_count = sum(1 for b in bets if b["bt_probability"] > 0)
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -236,6 +433,8 @@ async def get_summary(user: str = Depends(get_current_user)):
         "total_conference": len(conference),
         "conferences_tracked": list(conf_counts.keys()),
         "conference_counts": conf_counts,
-        "top_favorites": top_favorites,
-        "top_underdogs": top_underdogs,
+        "best_ev_bets": best_ev,
+        "worst_ev_bets": worst_ev,
+        "matched_teams": matched_count,
+        "total_markets": len(bets),
     }

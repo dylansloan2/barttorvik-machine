@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { LogIn, LogOut, TrendingUp, TrendingDown, Trophy, RefreshCw, BarChart3, Users, Target } from 'lucide-react'
+import { LogIn, LogOut, TrendingUp, TrendingDown, Trophy, RefreshCw, BarChart3, Users, Target, Zap } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -15,6 +15,24 @@ interface BetItem {
   last_price: number
   volume: number
   implied_prob: number
+  bt_probability: number
+  ev: number
+  bt_source: string
+  share_prob: number
+  sole_prob: number
+}
+
+interface BtStatus {
+  tourney_teams: number
+  conferences_scraped: string[]
+  schedule_games: number
+  last_scrape: number
+}
+
+interface ScheduleGame {
+  time: string
+  matchup: string
+  line: string
 }
 
 interface BetsResponse {
@@ -22,6 +40,9 @@ interface BetsResponse {
   total_markets: number
   make_tournament: BetItem[]
   conference_markets: Record<string, BetItem[]>
+  best_ev_bets: BetItem[]
+  bt_status: BtStatus
+  schedule: ScheduleGame[]
 }
 
 interface SummaryResponse {
@@ -30,8 +51,10 @@ interface SummaryResponse {
   total_conference: number
   conferences_tracked: string[]
   conference_counts: Record<string, number>
-  top_favorites: BetItem[]
-  top_underdogs: BetItem[]
+  best_ev_bets: BetItem[]
+  worst_ev_bets: BetItem[]
+  matched_teams: number
+  total_markets: number
 }
 
 function LoginPage({ onLogin }: { onLogin: (token: string) => void }) {
@@ -139,8 +162,21 @@ function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: s
   )
 }
 
-function MarketTable({ items, title }: { items: BetItem[]; title: string }) {
-  const [sortCol, setSortCol] = useState<'implied_prob' | 'yes_ask' | 'volume'>('implied_prob')
+function EvBadge({ ev }: { ev: number }) {
+  const pct = (ev * 100).toFixed(1)
+  let color = 'bg-slate-700 text-slate-300'
+  if (ev > 0.15) color = 'bg-emerald-900/60 text-emerald-300 border border-emerald-600'
+  else if (ev > 0.05) color = 'bg-green-900/50 text-green-300 border border-green-700'
+  else if (ev > 0) color = 'bg-lime-900/40 text-lime-300 border border-lime-700'
+  else if (ev < -0.15) color = 'bg-red-900/50 text-red-300 border border-red-700'
+  else if (ev < 0) color = 'bg-orange-900/40 text-orange-300 border border-orange-700'
+  return <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-semibold ${color}`}>{ev > 0 ? '+' : ''}{pct}%</span>
+}
+
+type SortKey = 'ev' | 'bt_probability' | 'implied_prob' | 'yes_ask' | 'no_price' | 'volume'
+
+function MarketTable({ items, title, showConf }: { items: BetItem[]; title: string; showConf?: boolean }) {
+  const [sortCol, setSortCol] = useState<SortKey>('ev')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const sorted = [...items].sort((a, b) => {
@@ -148,7 +184,7 @@ function MarketTable({ items, title }: { items: BetItem[]; title: string }) {
     return sortDir === 'desc' ? -diff : diff
   })
 
-  const toggleSort = (col: 'implied_prob' | 'yes_ask' | 'volume') => {
+  const toggleSort = (col: SortKey) => {
     if (sortCol === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
     else { setSortCol(col); setSortDir('desc') }
   }
@@ -168,15 +204,24 @@ function MarketTable({ items, title }: { items: BetItem[]; title: string }) {
         <table className="w-full">
           <thead>
             <tr className="text-left text-xs text-slate-400 border-b border-slate-700/50">
-              <th className="px-6 py-3 font-medium">Team</th>
-              <th className="px-6 py-3 font-medium">Ticker</th>
-              <th className="px-6 py-3 font-medium cursor-pointer hover:text-white" onClick={() => toggleSort('implied_prob')}>
-                Implied Prob<SortIcon col="implied_prob" />
+              <th className="px-4 py-3 font-medium">Team</th>
+              {showConf && <th className="px-4 py-3 font-medium">Type</th>}
+              <th className="px-4 py-3 font-medium cursor-pointer hover:text-white" onClick={() => toggleSort('ev')}>
+                EV<SortIcon col="ev" />
               </th>
-              <th className="px-6 py-3 font-medium cursor-pointer hover:text-white" onClick={() => toggleSort('yes_ask')}>
-                Yes Ask<SortIcon col="yes_ask" />
+              <th className="px-4 py-3 font-medium cursor-pointer hover:text-white" onClick={() => toggleSort('bt_probability')}>
+                BT Prob<SortIcon col="bt_probability" />
               </th>
-              <th className="px-6 py-3 font-medium cursor-pointer hover:text-white" onClick={() => toggleSort('volume')}>
+              <th className="px-4 py-3 font-medium cursor-pointer hover:text-white" onClick={() => toggleSort('implied_prob')}>
+                Kalshi Prob<SortIcon col="implied_prob" />
+              </th>
+              <th className="px-4 py-3 font-medium cursor-pointer hover:text-white" onClick={() => toggleSort('yes_ask')}>
+                Yes Price<SortIcon col="yes_ask" />
+              </th>
+              <th className="px-4 py-3 font-medium cursor-pointer hover:text-white" onClick={() => toggleSort('no_price')}>
+                No Price<SortIcon col="no_price" />
+              </th>
+              <th className="px-4 py-3 font-medium cursor-pointer hover:text-white" onClick={() => toggleSort('volume')}>
                 Volume<SortIcon col="volume" />
               </th>
             </tr>
@@ -184,11 +229,21 @@ function MarketTable({ items, title }: { items: BetItem[]; title: string }) {
           <tbody>
             {sorted.map((item) => (
               <tr key={item.ticker} className="border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors">
-                <td className="px-6 py-3 text-sm font-medium text-white">{item.team_name}</td>
-                <td className="px-6 py-3 text-xs text-slate-400 font-mono">{item.ticker}</td>
-                <td className="px-6 py-3"><ProbBadge prob={item.implied_prob} /></td>
-                <td className="px-6 py-3 text-sm text-slate-300">${item.yes_ask.toFixed(2)}</td>
-                <td className="px-6 py-3 text-sm text-slate-400">{item.volume.toLocaleString()}</td>
+                <td className="px-4 py-3">
+                  <div className="text-sm font-medium text-white">{item.team_name}</div>
+                  <div className="text-xs text-slate-500 font-mono">{item.ticker}</div>
+                </td>
+                {showConf && <td className="px-4 py-3 text-xs text-slate-400">{item.market_type === 'Conference Champion' ? item.conference : 'Tournament'}</td>}
+                <td className="px-4 py-3"><EvBadge ev={item.ev} /></td>
+                <td className="px-4 py-3">
+                  {item.bt_probability > 0
+                    ? <ProbBadge prob={item.bt_probability} />
+                    : <span className="text-xs text-slate-600">-</span>}
+                </td>
+                <td className="px-4 py-3"><ProbBadge prob={item.implied_prob} /></td>
+                <td className="px-4 py-3 text-sm text-slate-300">${item.yes_ask.toFixed(2)}</td>
+                <td className="px-4 py-3 text-sm text-slate-300">${item.no_price.toFixed(2)}</td>
+                <td className="px-4 py-3 text-sm text-slate-400">{item.volume.toLocaleString()}</td>
               </tr>
             ))}
           </tbody>
@@ -203,7 +258,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [summary, setSummary] = useState<SummaryResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [activeTab, setActiveTab] = useState<'overview' | 'tournament' | 'conference'>('overview')
+  const [activeTab, setActiveTab] = useState<'best_bets' | 'tournament' | 'conference' | 'schedule'>('best_bets')
   const [selectedConf, setSelectedConf] = useState<string>('')
 
   const fetchData = useCallback(async () => {
@@ -223,14 +278,17 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
       const summaryData = await summaryResp.json()
       setBets(betsData)
       setSummary(summaryData)
-      if (summaryData.conferences_tracked?.length > 0 && !selectedConf) {
-        setSelectedConf(summaryData.conferences_tracked[0])
-      }
+      setSelectedConf(prev => {
+        if (!prev && summaryData.conferences_tracked?.length > 0) {
+          return summaryData.conferences_tracked[0]
+        }
+        return prev
+      })
     } catch {
       setError('Failed to fetch data')
     }
     setLoading(false)
-  }, [token, onLogout, selectedConf])
+  }, [token, onLogout])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -272,95 +330,143 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
         )}
 
         {summary && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <StatCard
               icon={<BarChart3 className="w-5 h-5" />}
               label="Total Markets"
-              value={String((summary.total_make_tournament || 0) + (summary.total_conference || 0))}
-              sub="Active Kalshi markets"
+              value={String(summary.total_markets || 0)}
+              sub="Kalshi markets tracked"
             />
             <StatCard
               icon={<Target className="w-5 h-5" />}
-              label="Make Tournament"
-              value={String(summary.total_make_tournament || 0)}
-              sub="NCAA tournament markets"
+              label="BT Matched"
+              value={String(summary.matched_teams || 0)}
+              sub="Teams with BT data"
             />
             <StatCard
               icon={<Users className="w-5 h-5" />}
-              label="Conference Champs"
-              value={String(summary.total_conference || 0)}
-              sub={`${confList.length} conferences`}
+              label="Conferences"
+              value={String(confList.length)}
+              sub={`${summary.total_conference || 0} markets`}
+            />
+            <StatCard
+              icon={<Zap className="w-5 h-5" />}
+              label="Best EV Bet"
+              value={summary.best_ev_bets?.[0]?.team_name || '-'}
+              sub={summary.best_ev_bets?.[0] ? `EV: +${(summary.best_ev_bets[0].ev * 100).toFixed(1)}%` : ''}
             />
             <StatCard
               icon={<TrendingUp className="w-5 h-5" />}
-              label="Top Favorite"
-              value={summary.top_favorites?.[0]?.team_name || '-'}
-              sub={summary.top_favorites?.[0] ? `${(summary.top_favorites[0].implied_prob * 100).toFixed(1)}% implied` : ''}
+              label="Positive EV"
+              value={String(summary.best_ev_bets?.length || 0)}
+              sub="Value bets found"
             />
           </div>
         )}
 
+        {bets?.bt_status && (
+          <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl px-4 py-2 flex items-center gap-4 text-xs text-slate-500">
+            <span>BartTorvik: {bets.bt_status.tourney_teams} tourney teams</span>
+            <span>|</span>
+            <span>{bets.bt_status.conferences_scraped.length} conferences</span>
+            <span>|</span>
+            <span>{bets.bt_status.schedule_games} games today</span>
+            <span>|</span>
+            <span>Last scraped: {bets.bt_status.last_scrape > 0 ? new Date(bets.bt_status.last_scrape * 1000).toLocaleTimeString() : 'never'}</span>
+          </div>
+        )}
+
         <div className="flex gap-1 bg-slate-800/50 p-1 rounded-xl border border-slate-700 w-fit">
-          {(['overview', 'tournament', 'conference'] as const).map(tab => (
+          {([
+            { key: 'best_bets' as const, label: 'Best Bets' },
+            { key: 'tournament' as const, label: 'Tournament' },
+            { key: 'conference' as const, label: 'Conference' },
+            { key: 'schedule' as const, label: 'Schedule' },
+          ]).map(tab => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors capitalize ${
-                activeTab === tab
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === tab.key
                   ? 'bg-blue-600 text-white'
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
               }`}
             >
-              {tab}
+              {tab.label}
             </button>
           ))}
         </div>
 
         {loading && !bets ? (
           <div className="flex items-center justify-center py-20">
-            <RefreshCw className="w-8 h-8 text-blue-400 animate-spin" />
+            <div className="text-center">
+              <RefreshCw className="w-8 h-8 text-blue-400 animate-spin mx-auto mb-3" />
+              <p className="text-sm text-slate-400">Scraping BartTorvik & fetching Kalshi data...</p>
+              <p className="text-xs text-slate-600 mt-1">First load may take ~60s while scraping</p>
+            </div>
           </div>
         ) : (
           <>
-            {activeTab === 'overview' && summary && (
-              <div className="grid lg:grid-cols-2 gap-6">
-                <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-2xl overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-700 flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-green-400" />
-                    <h3 className="text-lg font-semibold text-white">Top Favorites</h3>
-                  </div>
-                  <div className="divide-y divide-slate-700/30">
-                    {summary.top_favorites?.map((item, i) => (
-                      <div key={item.ticker} className="px-6 py-3 flex items-center justify-between hover:bg-slate-700/20 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-slate-500 w-5">{i + 1}</span>
-                          <span className="text-sm font-medium text-white">{item.team_name}</span>
-                        </div>
-                        <ProbBadge prob={item.implied_prob} />
+            {activeTab === 'best_bets' && bets && summary && (
+              <div className="space-y-6">
+                {bets.best_ev_bets && bets.best_ev_bets.length > 0 && (
+                  <MarketTable items={bets.best_ev_bets} title="Best EV Bets (Positive Expected Value)" showConf />
+                )}
+
+                {summary.best_ev_bets && summary.best_ev_bets.length > 0 && (
+                  <div className="grid lg:grid-cols-2 gap-6">
+                    <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-2xl overflow-hidden">
+                      <div className="px-6 py-4 border-b border-slate-700 flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-green-400" />
+                        <h3 className="text-lg font-semibold text-white">Top +EV Bets</h3>
                       </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-2xl overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-700 flex items-center gap-2">
-                    <TrendingDown className="w-4 h-4 text-red-400" />
-                    <h3 className="text-lg font-semibold text-white">Top Underdogs</h3>
-                  </div>
-                  <div className="divide-y divide-slate-700/30">
-                    {summary.top_underdogs?.map((item, i) => (
-                      <div key={item.ticker} className="px-6 py-3 flex items-center justify-between hover:bg-slate-700/20 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-slate-500 w-5">{i + 1}</span>
-                          <span className="text-sm font-medium text-white">{item.team_name}</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-slate-400">${item.yes_ask.toFixed(2)}</span>
-                          <ProbBadge prob={item.implied_prob} />
-                        </div>
+                      <div className="divide-y divide-slate-700/30">
+                        {summary.best_ev_bets.map((item, i) => (
+                          <div key={item.ticker} className="px-6 py-3 flex items-center justify-between hover:bg-slate-700/20 transition-colors">
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs text-slate-500 w-5">{i + 1}</span>
+                              <div>
+                                <span className="text-sm font-medium text-white">{item.team_name}</span>
+                                <span className="text-xs text-slate-500 ml-2">{item.market_type === 'Conference Champion' ? item.conference : 'Tournament'}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-400">BT: {(item.bt_probability * 100).toFixed(0)}%</span>
+                              <span className="text-xs text-slate-500">vs</span>
+                              <span className="text-xs text-slate-400">${item.yes_ask.toFixed(2)}</span>
+                              <EvBadge ev={item.ev} />
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    </div>
+                    <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-2xl overflow-hidden">
+                      <div className="px-6 py-4 border-b border-slate-700 flex items-center gap-2">
+                        <TrendingDown className="w-4 h-4 text-red-400" />
+                        <h3 className="text-lg font-semibold text-white">Worst -EV (Overpriced on Kalshi)</h3>
+                      </div>
+                      <div className="divide-y divide-slate-700/30">
+                        {summary.worst_ev_bets?.map((item, i) => (
+                          <div key={item.ticker} className="px-6 py-3 flex items-center justify-between hover:bg-slate-700/20 transition-colors">
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs text-slate-500 w-5">{i + 1}</span>
+                              <div>
+                                <span className="text-sm font-medium text-white">{item.team_name}</span>
+                                <span className="text-xs text-slate-500 ml-2">{item.market_type === 'Conference Champion' ? item.conference : 'Tournament'}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-400">BT: {(item.bt_probability * 100).toFixed(0)}%</span>
+                              <span className="text-xs text-slate-500">vs</span>
+                              <span className="text-xs text-slate-400">${item.yes_ask.toFixed(2)}</span>
+                              <EvBadge ev={item.ev} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -391,6 +497,35 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                     title={`${selectedConf} Championship Markets`}
                   />
                 )}
+              </div>
+            )}
+
+            {activeTab === 'schedule' && bets && (
+              <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-2xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-700">
+                  <h3 className="text-lg font-semibold text-white">Today's Games (BartTorvik)</h3>
+                  <p className="text-xs text-slate-500">{bets.schedule?.length || 0} games</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="text-left text-xs text-slate-400 border-b border-slate-700/50">
+                        <th className="px-6 py-3 font-medium">Time</th>
+                        <th className="px-6 py-3 font-medium">Matchup</th>
+                        <th className="px-6 py-3 font-medium">T-Rank Line</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bets.schedule?.map((game, i) => (
+                        <tr key={i} className="border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors">
+                          <td className="px-6 py-3 text-sm text-slate-400 whitespace-nowrap">{game.time}</td>
+                          <td className="px-6 py-3 text-sm text-white whitespace-pre-line">{game.matchup}</td>
+                          <td className="px-6 py-3 text-sm text-slate-300 whitespace-pre-line">{game.line}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </>
