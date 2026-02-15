@@ -3,11 +3,7 @@
 Test to find March Madness markets using the elections API
 """
 
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
-from src.kalshi.kalshi_client import KalshiClient
+from kalshi.kalshi_client import KalshiClient
 
 def test_march_madness_markets():
     """Test to find March Madness markets"""

@@ -3,11 +3,7 @@
 Test to find Make Tournament markets using the correct method
 """
 
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
-from src.kalshi.kalshi_client import KalshiClient
+from kalshi.kalshi_client import KalshiClient
 
 def test_make_tournament_markets():
     """Test to find Make Tournament markets"""

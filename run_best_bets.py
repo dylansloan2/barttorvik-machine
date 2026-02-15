@@ -3,17 +3,13 @@
 Run the bot with real TourneyCast data and sample Kalshi data to show best bets
 """
 
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
 from datetime import datetime
-from src.browser import BrowserClient
-from src.scrapers.tourneycast_scraper import TourneyCastScraper
-from src.config import Config
-from src.matcher import TeamMatcher
-from src.ev import EVCalculator
-from src.output import OutputManager
+from browser import BrowserClient
+from scrapers.tourneycast_scraper import TourneyCastScraper
+from config import Config
+from matcher import TeamMatcher
+from ev import EVCalculator
+from output import OutputManager
 
 def create_sample_kalshi_contracts():
     """Create sample Kalshi contracts that match our scraped teams"""

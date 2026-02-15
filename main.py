@@ -77,27 +77,13 @@ def scrape_games(browser_client: BrowserClient, target_date: datetime) -> list:
 def get_kalshi_markets(config: Config, kalshi_client: KalshiClient) -> tuple:
     """Get Kalshi markets and contracts using production API"""
     
-    # Get Make Tournament markets with new method
-    make_tournament_markets = kalshi_client.get_make_tournament_markets()
+    make_tournament_contracts = kalshi_client.get_make_tournament_markets()
     
-    # Convert markets to contract format for compatibility
-    make_tournament_contracts = []
-    for market in make_tournament_markets:
-        # Get prices for this market
-        prices = kalshi_client.get_market_prices(market['ticker'])
-        
-        contract = {
-            'ticker': market['ticker'],
-            'title': market.get('title', ''),
-            'team_name': market['team_name'],
-            'yes_price': prices.get('yes_buy_price', 0.5),
-            'no_price': prices.get('no_buy_price', 0.5)
-        }
-        make_tournament_contracts.append(contract)
-    
-    # For now, conference markets are not implemented in production API
-    # This would need to be added based on available market titles
     conference_markets = {}
+    for conference in config.conferences:
+        contracts = kalshi_client.get_conference_markets(conference)
+        if contracts:
+            conference_markets[conference] = contracts
     
     return make_tournament_contracts, conference_markets
 

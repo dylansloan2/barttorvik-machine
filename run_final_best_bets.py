@@ -3,17 +3,13 @@
 Final demonstration of the Kalshi Best Bets bot with real TourneyCast data
 """
 
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
 from datetime import datetime
-from src.browser import BrowserClient
-from src.scrapers.tourneycast_scraper import TourneyCastScraper
-from src.config import Config
-from src.matcher import TeamMatcher
-from src.ev import EVCalculator
-from src.output import OutputManager
+from browser import BrowserClient
+from scrapers.tourneycast_scraper import TourneyCastScraper
+from config import Config
+from matcher import TeamMatcher
+from ev import EVCalculator
+from output import OutputManager
 
 def create_realistic_march_madness_markets():
     """Create realistic March Madness markets based on real TourneyCast data"""
