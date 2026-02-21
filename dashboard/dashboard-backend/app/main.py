@@ -333,6 +333,12 @@ BT_CACHE_TTL = 1800
 _scrape_lock = threading.Lock()
 
 
+def _clear_data_cache() -> None:
+    keys = ("bets", "bets_time", "bt_tourney", "bt_conferences", "bt_schedule", "bt_time")
+    for key in keys:
+        _cache.pop(key, None)
+
+
 def _scrape_barttorvik(force_refresh: bool = False):
     now = time.time()
     if (
@@ -513,6 +519,18 @@ async def get_bets(
         "positive_ev_bets": positive_ev,
         "bt_status": bt_status,
         "schedule": _cache.get("bt_schedule", []),
+    }
+
+
+@app.post("/api/refresh")
+async def refresh_data(user: str = Depends(get_current_user)):
+    _clear_data_cache()
+    # Rebuild cache immediately so subsequent reads are hot and consistent.
+    bets = get_cached_bets(force_refresh=True)
+    return {
+        "ok": True,
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        "total_markets": len(bets),
     }
 
 
