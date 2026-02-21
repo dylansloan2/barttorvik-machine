@@ -169,11 +169,11 @@ class KalshiClient:
                 "ticker": m["ticker"],
                 "title": m.get("title", ""),
                 "team_name": team_name,
-                "yes_price": m.get("yes_bid", 0) / 100.0,
-                "no_price": m.get("no_bid", 0) / 100.0,
-                "yes_ask": m.get("yes_ask", 0) / 100.0,
-                "no_ask": m.get("no_ask", 0) / 100.0,
-                "last_price": m.get("last_price", 0) / 100.0,
+                "yes_price": self._read_price(m, "yes_bid"),
+                "no_price": self._read_price(m, "no_bid"),
+                "yes_ask": self._read_price(m, "yes_ask"),
+                "no_ask": self._read_price(m, "no_ask"),
+                "last_price": self._read_price(m, "last_price"),
                 "volume": m.get("volume", 0),
                 "status": m.get("status", ""),
                 "event_ticker": m.get("event_ticker", ""),
@@ -203,11 +203,11 @@ class KalshiClient:
                 "ticker": m["ticker"],
                 "title": m.get("title", ""),
                 "team_name": team_name,
-                "yes_price": m.get("yes_bid", 0) / 100.0,
-                "no_price": m.get("no_bid", 0) / 100.0,
-                "yes_ask": m.get("yes_ask", 0) / 100.0,
-                "no_ask": m.get("no_ask", 0) / 100.0,
-                "last_price": m.get("last_price", 0) / 100.0,
+                "yes_price": self._read_price(m, "yes_bid"),
+                "no_price": self._read_price(m, "no_bid"),
+                "yes_ask": self._read_price(m, "yes_ask"),
+                "no_ask": self._read_price(m, "no_ask"),
+                "last_price": self._read_price(m, "last_price"),
                 "volume": m.get("volume", 0),
                 "status": m.get("status", ""),
                 "event_ticker": m.get("event_ticker", ""),
@@ -221,11 +221,11 @@ class KalshiClient:
             return {}
         market = data.get("market", {})
         return {
-            "yes_buy_price": market.get("yes_ask", 0) / 100.0,
-            "no_buy_price": market.get("no_ask", 0) / 100.0,
-            "yes_bid_price": market.get("yes_bid", 0) / 100.0,
-            "no_bid_price": market.get("no_bid", 0) / 100.0,
-            "last_price": market.get("last_price", 0) / 100.0,
+            "yes_buy_price": self._read_price(market, "yes_ask"),
+            "no_buy_price": self._read_price(market, "no_ask"),
+            "yes_bid_price": self._read_price(market, "yes_bid"),
+            "no_bid_price": self._read_price(market, "no_bid"),
+            "last_price": self._read_price(market, "last_price"),
         }
 
     def _get_yes_price(self, ticker: str) -> float:
@@ -256,6 +256,24 @@ class KalshiClient:
         if len(parts) == 2:
             return parts[1]
         return ""
+
+    def _read_price(self, market: Dict[str, Any], base_field: str) -> float:
+        dollars_field = f"{base_field}_dollars"
+        if dollars_field in market and market[dollars_field] not in (None, ""):
+            try:
+                value = float(market[dollars_field])
+                return max(0.0, min(1.0, value))
+            except (TypeError, ValueError):
+                pass
+
+        raw = market.get(base_field, 0)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+        if value > 1.0:
+            return max(0.0, min(1.0, value / 100.0))
+        return max(0.0, min(1.0, value))
 
     def can_auth_trade(self) -> bool:
         return bool(self.private_key and self.api_key_id)
