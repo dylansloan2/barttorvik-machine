@@ -218,11 +218,11 @@ def parse_market(m: dict, market_type: str, conference: str) -> Optional[dict]:
     if not team_name:
         return None
 
-    yes_bid = m.get("yes_bid", 0) / 100.0
-    yes_ask = m.get("yes_ask", 0) / 100.0
-    no_bid = m.get("no_bid", 0) / 100.0
-    no_ask = m.get("no_ask", 0) / 100.0
-    last_price = m.get("last_price", 0) / 100.0
+    yes_bid = _read_price(m, "yes_bid")
+    yes_ask = _read_price(m, "yes_ask")
+    no_bid = _read_price(m, "no_bid")
+    no_ask = _read_price(m, "no_ask")
+    last_price = _read_price(m, "last_price")
     volume = m.get("volume", 0)
 
     implied_prob = _derive_implied_prob(
@@ -282,6 +282,35 @@ def _derive_implied_prob(
         return max(0.0, min(1.0, sum(inv_quotes) / len(inv_quotes)))
 
     return 0.0
+
+
+def _read_price(market: dict, base_field: str) -> float:
+    """
+    Read Kalshi price values from either:
+    - legacy cent fields (e.g. yes_bid=51)
+    - dollar fields (e.g. yes_bid_dollars=\"0.5100\")
+    - normalized numeric dollars
+    """
+    dollars_field = f"{base_field}_dollars"
+    if dollars_field in market and market[dollars_field] not in (None, ""):
+        try:
+            value = float(market[dollars_field])
+            return max(0.0, min(1.0, value))
+        except (TypeError, ValueError):
+            pass
+
+    raw = market.get(base_field, 0)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+    # Legacy cents payload.
+    if value > 1.0:
+        return max(0.0, min(1.0, value / 100.0))
+
+    # Already dollar-normalized.
+    return max(0.0, min(1.0, value))
 
 
 def get_market_cost(parsed_market: dict) -> float:
