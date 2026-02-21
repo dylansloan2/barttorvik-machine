@@ -253,6 +253,11 @@ def parse_market(m: dict, market_type: str, conference: str) -> Optional[dict]:
     }
 
 
+def _is_informative_quote(value: float) -> bool:
+    # 0 and 1 are often placeholders for "no real quote" on Kalshi snapshots.
+    return 0.0 < value < 1.0
+
+
 def _derive_implied_prob(
     yes_bid: float,
     yes_ask: float,
@@ -260,23 +265,23 @@ def _derive_implied_prob(
     no_ask: float,
     last_price: float,
 ) -> float:
-    # Prefer YES-side direct quotes.
-    if yes_bid > 0 and yes_ask > 0:
+    # Prefer YES-side direct quotes only when they are informative.
+    if _is_informative_quote(yes_bid) and _is_informative_quote(yes_ask):
         return max(0.0, min(1.0, (yes_bid + yes_ask) / 2.0))
-    if yes_ask > 0:
+    if _is_informative_quote(yes_ask):
         return max(0.0, min(1.0, yes_ask))
-    if yes_bid > 0:
+    if _is_informative_quote(yes_bid):
         return max(0.0, min(1.0, yes_bid))
 
-    # Fall back to last trade if quoted.
-    if last_price > 0:
+    # Fall back to last trade if informative.
+    if _is_informative_quote(last_price):
         return max(0.0, min(1.0, last_price))
 
-    # Finally infer YES from NO-side quotes when available.
+    # Infer YES from NO-side quotes only when NO quotes are informative.
     inv_quotes = []
-    if no_bid < 1.0:
+    if _is_informative_quote(no_bid):
         inv_quotes.append(1.0 - no_bid)
-    if no_ask < 1.0:
+    if _is_informative_quote(no_ask):
         inv_quotes.append(1.0 - no_ask)
     if inv_quotes:
         return max(0.0, min(1.0, sum(inv_quotes) / len(inv_quotes)))
@@ -467,11 +472,19 @@ async def get_bets(user: str = Depends(get_current_user)):
     for b in conference:
         conf_grouped.setdefault(b["conference"], []).append(b)
 
-    best_ev = sorted(
+    positive_ev = sorted(
         [b for b in bets if b["ev"] > 0],
         key=lambda x: x["ev"],
         reverse=True,
     )[:20]
+    best_ev = positive_ev
+    if not best_ev:
+        # Fallback for thin markets: still show top matched edges so dashboard is never blank.
+        best_ev = sorted(
+            [b for b in bets if b["bt_probability"] > 0],
+            key=lambda x: x["ev"],
+            reverse=True,
+        )[:20]
 
     bt_status = {
         "tourney_teams": len(_cache.get("bt_tourney", {})),
@@ -486,6 +499,7 @@ async def get_bets(user: str = Depends(get_current_user)):
         "make_tournament": make_tourney,
         "conference_markets": conf_grouped,
         "best_ev_bets": best_ev,
+        "positive_ev_bets": positive_ev,
         "bt_status": bt_status,
         "schedule": _cache.get("bt_schedule", []),
     }
@@ -497,11 +511,18 @@ async def get_summary(user: str = Depends(get_current_user)):
     make_tourney = [b for b in bets if b["market_type"] == "Make Tournament"]
     conference = [b for b in bets if b["market_type"] == "Conference Champion"]
 
-    best_ev = sorted(
+    positive_ev = sorted(
         [b for b in bets if b["ev"] > 0],
         key=lambda x: x["ev"],
         reverse=True,
     )[:10]
+    best_ev = positive_ev
+    if not best_ev:
+        best_ev = sorted(
+            [b for b in bets if b["bt_probability"] > 0],
+            key=lambda x: x["ev"],
+            reverse=True,
+        )[:10]
 
     worst_ev = sorted(
         [b for b in bets if b["ev"] < 0 and b["bt_probability"] > 0],
@@ -521,6 +542,8 @@ async def get_summary(user: str = Depends(get_current_user)):
         "conferences_tracked": list(conf_counts.keys()),
         "conference_counts": conf_counts,
         "best_ev_bets": best_ev,
+        "positive_ev_bets": positive_ev,
+        "positive_ev_count": sum(1 for b in bets if b["ev"] > 0),
         "worst_ev_bets": worst_ev,
         "matched_teams": matched_count,
         "total_markets": len(bets),
