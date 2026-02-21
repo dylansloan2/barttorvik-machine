@@ -268,11 +268,27 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     setLoading(true)
     setError('')
     const headers = { Authorization: `Bearer ${token}` }
-    const qs = refresh ? '?refresh=true' : ''
+    const nonce = Date.now()
+    const qs = refresh ? `?refresh=true&_ts=${nonce}` : `?_ts=${nonce}`
     try {
+      if (refresh) {
+        const refreshResp = await fetch(`${API_URL}/api/refresh`, {
+          method: 'POST',
+          headers,
+          cache: 'no-store',
+        })
+        if (refreshResp.status === 401) {
+          onLogout()
+          return
+        }
+        if (!refreshResp.ok) {
+          throw new Error('Failed to refresh backend data')
+        }
+      }
+
       const [betsResp, summaryResp] = await Promise.all([
-        fetch(`${API_URL}/api/bets${qs}`, { headers }),
-        fetch(`${API_URL}/api/summary${qs}`, { headers }),
+        fetch(`${API_URL}/api/bets${qs}`, { headers, cache: 'no-store' }),
+        fetch(`${API_URL}/api/summary${qs}`, { headers, cache: 'no-store' }),
       ])
       if (betsResp.status === 401 || summaryResp.status === 401) {
         onLogout()
