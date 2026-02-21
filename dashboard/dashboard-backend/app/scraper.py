@@ -1,10 +1,13 @@
 import logging
 import time
+import os
 from datetime import datetime
 from typing import Dict, List
+from pathlib import Path
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -28,6 +31,41 @@ BARTTORVIK_CONF_CODES = {
 }
 
 
+def _resolve_chromedriver_path() -> str:
+    """
+    Resolve a stable chromedriver binary path to avoid Selenium Manager
+    downloading a fresh (and often Gatekeeper-blocked) executable.
+    """
+    env_path = os.getenv("CHROMEDRIVER_PATH", "").strip()
+    if env_path and Path(env_path).exists():
+        return env_path
+
+    cache_root = Path.home() / ".cache" / "selenium" / "chromedriver" / "mac-arm64"
+    if cache_root.exists():
+        drivers = sorted(cache_root.glob("*/chromedriver"), reverse=True)
+        for driver in drivers:
+            if driver.exists():
+                return str(driver)
+
+    auto_root = (
+        Path.home()
+        / "Library"
+        / "Python"
+        / "3.9"
+        / "lib"
+        / "python"
+        / "site-packages"
+        / "chromedriver_autoinstaller"
+    )
+    if auto_root.exists():
+        drivers = sorted(auto_root.glob("*/chromedriver"), reverse=True)
+        for driver in drivers:
+            if driver.exists():
+                return str(driver)
+
+    return ""
+
+
 def _create_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless")
@@ -35,7 +73,15 @@ def _create_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-    driver = webdriver.Chrome(options=chrome_options)
+
+    driver_path = _resolve_chromedriver_path()
+    if driver_path:
+        logger.info("Using chromedriver at %s", driver_path)
+        service = Service(executable_path=driver_path)
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+    else:
+        logger.warning("No fixed chromedriver path found; falling back to Selenium Manager")
+        driver = webdriver.Chrome(options=chrome_options)
     driver.set_page_load_timeout(30)
     return driver
 

@@ -38,7 +38,7 @@ USERS_DB = {
     "dylan": pbkdf2_sha256.hash("bart123#")
 }
 
-KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
+KALSHI_BASE_URL = os.getenv("KALSHI_BASE_URL", "https://demo-api.kalshi.co/trade-api/v2")
 MAKE_TOURNAMENT_SERIES = "KXMAKEMARMAD"
 CONFERENCE_SERIES_MAP = {
     "SEC": "KXSECREG",
@@ -124,7 +124,14 @@ def kalshi_get(path: str, params: Optional[dict] = None) -> Optional[dict]:
 def fetch_markets_by_series(series_ticker: str) -> list:
     all_markets = []
     cursor = None
+    seen_cursors = set()
+    max_pages = 200
+    page_count = 0
     while True:
+        page_count += 1
+        if page_count > max_pages:
+            logger.warning("Stopped pagination for %s after %d pages", series_ticker, max_pages)
+            break
         params = {"series_ticker": series_ticker, "status": "open", "limit": "200"}
         if cursor:
             params["cursor"] = cursor
@@ -133,9 +140,14 @@ def fetch_markets_by_series(series_ticker: str) -> list:
             break
         markets = data.get("markets", [])
         all_markets.extend(markets)
-        cursor = data.get("cursor", "")
-        if not cursor or not markets:
+        next_cursor = data.get("cursor", "")
+        if not next_cursor or not markets:
             break
+        if next_cursor in seen_cursors:
+            logger.warning("Detected repeated cursor for %s, stopping pagination", series_ticker)
+            break
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
     return all_markets
 
 
@@ -235,6 +247,15 @@ def parse_market(m: dict, market_type: str, conference: str) -> Optional[dict]:
     }
 
 
+def get_market_cost(parsed_market: dict) -> float:
+    """Choose the best available market cost for EV calculations."""
+    for key in ("yes_ask", "yes_price", "last_price"):
+        value = parsed_market.get(key, 0.0) or 0.0
+        if value > 0:
+            return float(value)
+    return 0.0
+
+
 _cache: dict = {}
 CACHE_TTL = 300
 BT_CACHE_TTL = 1800
@@ -305,7 +326,7 @@ def get_cached_bets() -> list:
             parsed["bt_probability"] = round(bt_prob, 4)
             parsed["bt_source"] = f"BT: {bt_data['team']} ({bt_data['conference']})"
 
-            cost = parsed["yes_ask"] if parsed["yes_ask"] > 0 else parsed["yes_price"]
+            cost = get_market_cost(parsed)
             if cost > 0:
                 parsed["ev"] = round(bt_prob * 1.0 - cost, 4)
 
@@ -336,7 +357,7 @@ def get_cached_bets() -> list:
                 parsed["share_prob"] = round(share_prob, 4)
                 parsed["sole_prob"] = round(sole_prob, 4)
 
-                cost = parsed["yes_ask"] if parsed["yes_ask"] > 0 else parsed["yes_price"]
+                cost = get_market_cost(parsed)
                 if cost > 0:
                     parsed["ev"] = round(effective_prob - cost, 4)
 

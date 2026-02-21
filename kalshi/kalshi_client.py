@@ -11,7 +11,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import padding
 
 
-BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
+BASE_URL = "https://demo-api.kalshi.co/trade-api/v2"
 
 MAKE_TOURNAMENT_SERIES = "KXMAKEMARMAD"
 
@@ -206,6 +206,14 @@ class KalshiClient:
             "no_bid_price": market.get("no_bid", 0) / 100.0,
             "last_price": market.get("last_price", 0) / 100.0,
         }
+
+    def _get_yes_price(self, ticker: str) -> float:
+        """
+        Backward-compatible helper used by older test scripts.
+        Returns the best YES ask as a dollar price.
+        """
+        prices = self.get_market_prices(ticker)
+        return float(prices.get("yes_buy_price", 0.0))
 
     def get_market_orderbook(self, ticker: str) -> Dict:
         data = self._get(f"/markets/{ticker}/orderbook")
