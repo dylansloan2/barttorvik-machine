@@ -13,6 +13,19 @@ ev:
   share_factor: 0.5  # Expected payout factor for shared championships
   top_bets: 20  # Number of top bets to display
 
+# Autotrader settings
+autotrader:
+  min_edge: 0.15  # Minimum required edge for execution
+  kelly_fraction: 0.25  # Quarter Kelly
+  maker_discount: 0.02  # Discount below fair prob for maker orders
+  bankroll: 1000.0
+  max_daily_exposure: 300.0
+  max_per_market_exposure: 75.0
+  max_orders_per_run: 40
+  order_retries: 3
+  schedule_timezone: "America/Chicago"
+  kill_switch_file: "autotrader.stop"
+
 # Kalshi API settings
 kalshi:
   base_url: "https://api.elections.kalshi.com/trade-api/v2"

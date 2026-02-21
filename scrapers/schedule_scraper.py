@@ -57,10 +57,16 @@ class ScheduleScraper:
 
             if not matchup_text:
                 if len(cells) >= 2:
-                    away_team = cells[0].text.strip()
-                    home_team = cells[1].text.strip()
+                    time_text = cells[0].text.strip()
+                    if len(cells) >= 3:
+                        away_team = cells[1].text.strip()
+                        home_team = cells[2].text.strip()
+                    else:
+                        away_team = cells[0].text.strip()
+                        home_team = cells[1].text.strip()
                     if away_team and home_team:
                         return {
+                            "time": time_text,
                             "away_team": away_team,
                             "home_team": home_team,
                         }
@@ -77,6 +83,7 @@ class ScheduleScraper:
 
             if len(parts) == 2:
                 return {
+                    "time": cells[0].text.strip() if cells else "",
                     "away_team": parts[0].strip(),
                     "home_team": parts[1].strip(),
                 }
