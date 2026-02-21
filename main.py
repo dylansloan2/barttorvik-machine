@@ -16,10 +16,10 @@ from matcher import TeamMatcher
 from ev import EVCalculator
 from output import OutputManager
 
-def setup_logging():
+def setup_logging(verbose: bool = False):
     """Setup logging configuration"""
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG if verbose else logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(sys.stdout)
@@ -36,6 +36,7 @@ def parse_arguments():
     parser.add_argument('--share-factor', type=float, default=0.5, help='Share factor for conference championships (default: 0.5)')
     parser.add_argument('--dry-run', action='store_true', help='Run without placing trades (default)')
     parser.add_argument('--screenshots', action='store_true', help='Save screenshots when parsing fails')
+    parser.add_argument('--verbose', action='store_true', help='Enable verbose debug logging')
     
     return parser.parse_args()
 
@@ -90,7 +91,7 @@ def get_kalshi_markets(config: Config, kalshi_client: KalshiClient) -> tuple:
 def main():
     """Main function"""
     args = parse_arguments()
-    setup_logging()
+    setup_logging(verbose=args.verbose)
     logger = logging.getLogger(__name__)
     
     # Parse target date
