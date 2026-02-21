@@ -15,6 +15,7 @@ from kalshi.kalshi_client import KalshiClient
 from matcher import TeamMatcher
 from ev import EVCalculator
 from output import OutputManager
+from autotrader import AutoTrader, AutotradeConfig
 
 def setup_logging(verbose: bool = False):
     """Setup logging configuration"""
@@ -37,6 +38,20 @@ def parse_arguments():
     parser.add_argument('--dry-run', action='store_true', help='Run without placing trades (default)')
     parser.add_argument('--screenshots', action='store_true', help='Save screenshots when parsing fails')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose debug logging')
+    parser.add_argument('--autotrade', action='store_true', help='Enable autotrader execution')
+    parser.add_argument('--live-orders', action='store_true', help='Actually place/cancel orders (requires API auth)')
+    parser.add_argument('--validate-live-trading', action='store_true', help='Run live trading auth preflight and exit')
+    parser.add_argument('--bankroll', type=float, default=1000.0, help='Bankroll used for Kelly sizing')
+    parser.add_argument('--min-edge', type=float, default=0.15, help='Minimum edge required for autotrades')
+    parser.add_argument('--kelly-fraction', type=float, default=0.25, help='Fractional Kelly multiplier')
+    parser.add_argument('--maker-discount', type=float, default=0.02, help='Maker price discount below fair probability')
+    parser.add_argument('--max-daily-exposure', type=float, default=300.0, help='Maximum total daily notional exposure')
+    parser.add_argument('--max-per-market-exposure', type=float, default=75.0, help='Maximum notional exposure per market')
+    parser.add_argument('--max-orders', type=int, default=40, help='Maximum orders per run')
+    parser.add_argument('--order-retries', type=int, default=3, help='Retries for failed live orders')
+    parser.add_argument('--kill-switch-file', type=str, default='autotrader.stop', help='Kill switch file path')
+    parser.add_argument('--schedule-timezone', type=str, default='America/Chicago', help='Timezone of scraped game times')
+    parser.add_argument('--cancel-maker-at-tipoff', action='store_true', help='Cancel maker orders at first game tipoff')
     
     return parser.parse_args()
 
@@ -130,6 +145,28 @@ def main():
         logger.error("Kalshi API preflight check failed - aborting")
         sys.exit(1)
     logger.info("Kalshi API preflight check passed")
+
+    if args.validate_live_trading:
+        autotrader = AutoTrader(
+            client=kalshi_client,
+            config=AutotradeConfig(
+                bankroll=args.bankroll,
+                min_edge=args.min_edge,
+                kelly_fraction=args.kelly_fraction,
+                maker_discount=args.maker_discount,
+                max_daily_exposure=args.max_daily_exposure,
+                max_per_market_exposure=args.max_per_market_exposure,
+                max_orders_per_run=args.max_orders,
+                order_retries=args.order_retries,
+                kill_switch_file=args.kill_switch_file,
+                schedule_timezone=args.schedule_timezone,
+                state_file=str(output_dir / "autotrader_state.json"),
+            ),
+            timezone_name=config.output.get("timezone", "America/Chicago"),
+        )
+        ok = autotrader.validate_live_trading_readiness()
+        print("✅ Live trading validation passed" if ok else "❌ Live trading validation failed")
+        sys.exit(0 if ok else 1)
     
     log_messages = []
     
@@ -195,6 +232,43 @@ def main():
         # Generate output
         logger.info("Generating reports...")
         output_manager.generate_report(all_bets, log_messages)
+
+        # Optional autotrader execution
+        if args.autotrade:
+            autotrader = AutoTrader(
+                client=kalshi_client,
+                config=AutotradeConfig(
+                    bankroll=args.bankroll,
+                    min_edge=args.min_edge,
+                    kelly_fraction=args.kelly_fraction,
+                    maker_discount=args.maker_discount,
+                    max_daily_exposure=args.max_daily_exposure,
+                    max_per_market_exposure=args.max_per_market_exposure,
+                    max_orders_per_run=args.max_orders,
+                    order_retries=args.order_retries,
+                    kill_switch_file=args.kill_switch_file,
+                    schedule_timezone=args.schedule_timezone,
+                    state_file=str(output_dir / "autotrader_state.json"),
+                ),
+                timezone_name=config.output.get("timezone", "America/Chicago"),
+            )
+            if args.live_orders and not autotrader.validate_live_trading_readiness():
+                logger.error("Live trading readiness checks failed")
+                sys.exit(1)
+
+            placed = autotrader.trade_best_edges(all_bets, live_orders=args.live_orders)
+            log_messages.append(
+                f"Autotrader orders: taker={len(placed['taker'])}, maker={len(placed['maker'])}, live={args.live_orders}"
+            )
+
+            if args.cancel_maker_at_tipoff:
+                canceled = autotrader.cancel_maker_orders_at_first_tipoff(
+                    games=games,
+                    maker_orders=placed["maker"],
+                    target_date=target_date.date(),
+                    live_orders=args.live_orders,
+                )
+                log_messages.append(f"Autotrader maker cancels at tipoff: {canceled}")
         
         # Print summary
         print(f"\n✅ Analysis complete!")
