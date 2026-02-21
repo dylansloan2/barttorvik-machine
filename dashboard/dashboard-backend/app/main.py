@@ -38,7 +38,7 @@ USERS_DB = {
     "dylan": pbkdf2_sha256.hash("bart123#")
 }
 
-KALSHI_BASE_URL = os.getenv("KALSHI_BASE_URL", "https://demo-api.kalshi.co/trade-api/v2")
+KALSHI_BASE_URL = os.getenv("KALSHI_BASE_URL", "https://api.kalshi.com/trade-api/v2")
 MAKE_TOURNAMENT_SERIES = "KXMAKEMARMAD"
 CONFERENCE_SERIES_MAP = {
     "SEC": "KXSECREG",
@@ -225,7 +225,13 @@ def parse_market(m: dict, market_type: str, conference: str) -> Optional[dict]:
     last_price = m.get("last_price", 0) / 100.0
     volume = m.get("volume", 0)
 
-    mid_price = (yes_bid + yes_ask) / 2 if (yes_bid + yes_ask) > 0 else last_price
+    implied_prob = _derive_implied_prob(
+        yes_bid=yes_bid,
+        yes_ask=yes_ask,
+        no_bid=no_bid,
+        no_ask=no_ask,
+        last_price=last_price,
+    )
 
     return {
         "team_name": team_name,
@@ -238,13 +244,44 @@ def parse_market(m: dict, market_type: str, conference: str) -> Optional[dict]:
         "no_ask": no_ask,
         "last_price": last_price,
         "volume": volume,
-        "implied_prob": round(mid_price, 4),
+        "implied_prob": round(implied_prob, 4),
         "bt_probability": 0.0,
         "ev": 0.0,
         "bt_source": "",
         "share_prob": 0.0,
         "sole_prob": 0.0,
     }
+
+
+def _derive_implied_prob(
+    yes_bid: float,
+    yes_ask: float,
+    no_bid: float,
+    no_ask: float,
+    last_price: float,
+) -> float:
+    # Prefer YES-side direct quotes.
+    if yes_bid > 0 and yes_ask > 0:
+        return max(0.0, min(1.0, (yes_bid + yes_ask) / 2.0))
+    if yes_ask > 0:
+        return max(0.0, min(1.0, yes_ask))
+    if yes_bid > 0:
+        return max(0.0, min(1.0, yes_bid))
+
+    # Fall back to last trade if quoted.
+    if last_price > 0:
+        return max(0.0, min(1.0, last_price))
+
+    # Finally infer YES from NO-side quotes when available.
+    inv_quotes = []
+    if no_bid < 1.0:
+        inv_quotes.append(1.0 - no_bid)
+    if no_ask < 1.0:
+        inv_quotes.append(1.0 - no_ask)
+    if inv_quotes:
+        return max(0.0, min(1.0, sum(inv_quotes) / len(inv_quotes)))
+
+    return 0.0
 
 
 def get_market_cost(parsed_market: dict) -> float:
