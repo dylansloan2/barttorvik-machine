@@ -41,6 +41,7 @@ interface BetsResponse {
   make_tournament: BetItem[]
   conference_markets: Record<string, BetItem[]>
   best_ev_bets: BetItem[]
+  positive_ev_bets?: BetItem[]
   bt_status: BtStatus
   schedule: ScheduleGame[]
 }
@@ -52,6 +53,8 @@ interface SummaryResponse {
   conferences_tracked: string[]
   conference_counts: Record<string, number>
   best_ev_bets: BetItem[]
+  positive_ev_bets?: BetItem[]
+  positive_ev_count?: number
   worst_ev_bets: BetItem[]
   matched_teams: number
   total_markets: number
@@ -358,7 +361,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
             <StatCard
               icon={<TrendingUp className="w-5 h-5" />}
               label="Positive EV"
-              value={String(summary.best_ev_bets?.length || 0)}
+              value={String(summary.positive_ev_count ?? summary.positive_ev_bets?.length ?? summary.best_ev_bets?.length ?? 0)}
               sub="Value bets found"
             />
           </div>
@@ -409,9 +412,13 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
           <>
             {activeTab === 'best_bets' && bets && summary && (
               <div className="space-y-6">
-                {bets.best_ev_bets && bets.best_ev_bets.length > 0 && (
-                  <MarketTable items={bets.best_ev_bets} title="Best EV Bets (Positive Expected Value)" showConf />
-                )}
+                <MarketTable
+                  items={bets.best_ev_bets || []}
+                  title={bets.positive_ev_bets && bets.positive_ev_bets.length > 0
+                    ? 'Best EV Bets (Positive Expected Value)'
+                    : 'Best EV Bets (Top Edges, None Currently Positive)'}
+                  showConf
+                />
 
                 {summary.best_ev_bets && summary.best_ev_bets.length > 0 && (
                   <div className="grid lg:grid-cols-2 gap-6">
