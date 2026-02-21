@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.hash import pbkdf2_sha256
@@ -333,9 +333,13 @@ BT_CACHE_TTL = 1800
 _scrape_lock = threading.Lock()
 
 
-def _scrape_barttorvik():
+def _scrape_barttorvik(force_refresh: bool = False):
     now = time.time()
-    if "bt_tourney" in _cache and now - _cache.get("bt_time", 0) < BT_CACHE_TTL:
+    if (
+        not force_refresh
+        and "bt_tourney" in _cache
+        and now - _cache.get("bt_time", 0) < BT_CACHE_TTL
+    ):
         return
 
     logger.info("Starting BartTorvik scrape...")
@@ -371,13 +375,17 @@ def _scrape_barttorvik():
     logger.info("BartTorvik scrape complete")
 
 
-def get_cached_bets() -> list:
+def get_cached_bets(force_refresh: bool = False) -> list:
     now = time.time()
-    if "bets" in _cache and now - _cache.get("bets_time", 0) < CACHE_TTL:
+    if (
+        not force_refresh
+        and "bets" in _cache
+        and now - _cache.get("bets_time", 0) < CACHE_TTL
+    ):
         return _cache["bets"]
 
     with _scrape_lock:
-        _scrape_barttorvik()
+        _scrape_barttorvik(force_refresh=force_refresh)
 
     bt_tourney = _cache.get("bt_tourney", {})
     bt_conferences = _cache.get("bt_conferences", {})
@@ -463,8 +471,11 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 
 @app.get("/api/bets")
-async def get_bets(user: str = Depends(get_current_user)):
-    bets = get_cached_bets()
+async def get_bets(
+    user: str = Depends(get_current_user),
+    refresh: bool = Query(default=False),
+):
+    bets = get_cached_bets(force_refresh=refresh)
     make_tourney = [b for b in bets if b["market_type"] == "Make Tournament"]
     conference = [b for b in bets if b["market_type"] == "Conference Champion"]
 
@@ -506,8 +517,11 @@ async def get_bets(user: str = Depends(get_current_user)):
 
 
 @app.get("/api/summary")
-async def get_summary(user: str = Depends(get_current_user)):
-    bets = get_cached_bets()
+async def get_summary(
+    user: str = Depends(get_current_user),
+    refresh: bool = Query(default=False),
+):
+    bets = get_cached_bets(force_refresh=refresh)
     make_tourney = [b for b in bets if b["market_type"] == "Make Tournament"]
     conference = [b for b in bets if b["market_type"] == "Conference Champion"]
 

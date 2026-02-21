@@ -264,18 +264,22 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [activeTab, setActiveTab] = useState<'best_bets' | 'tournament' | 'conference' | 'schedule'>('best_bets')
   const [selectedConf, setSelectedConf] = useState<string>('')
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (refresh = false) => {
     setLoading(true)
     setError('')
     const headers = { Authorization: `Bearer ${token}` }
+    const qs = refresh ? '?refresh=true' : ''
     try {
       const [betsResp, summaryResp] = await Promise.all([
-        fetch(`${API_URL}/api/bets`, { headers }),
-        fetch(`${API_URL}/api/summary`, { headers }),
+        fetch(`${API_URL}/api/bets${qs}`, { headers }),
+        fetch(`${API_URL}/api/summary${qs}`, { headers }),
       ])
       if (betsResp.status === 401 || summaryResp.status === 401) {
         onLogout()
         return
+      }
+      if (!betsResp.ok || !summaryResp.ok) {
+        throw new Error('Failed to fetch API data')
       }
       const betsData = await betsResp.json()
       const summaryData = await summaryResp.json()
@@ -309,7 +313,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={fetchData}
+              onClick={() => fetchData(true)}
               disabled={loading}
               className="flex items-center gap-1.5 px-3 py-2 text-sm bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 rounded-xl transition-colors"
             >
