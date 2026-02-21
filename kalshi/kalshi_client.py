@@ -3,7 +3,8 @@ import time
 import logging
 import base64
 import datetime
-from typing import Dict, List, Optional
+import uuid
+from typing import Dict, List, Optional, Any
 
 import requests
 from cryptography.hazmat.primitives import serialization, hashes
@@ -72,26 +73,46 @@ class KalshiClient:
         }
 
     def _get(self, path: str, params: Optional[Dict] = None, auth: bool = False) -> Optional[Dict]:
+        return self._request("GET", path, params=params, auth=auth)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict] = None,
+        json_body: Optional[Dict] = None,
+        auth: bool = False,
+    ) -> Optional[Dict]:
         url = self.base_url + path
-        headers = {}
+        headers: Dict[str, str] = {}
         if auth:
-            headers = self._get_auth_headers("GET", path)
+            headers = self._get_auth_headers(method.upper(), path)
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                resp = self.session.get(url, params=params, headers=headers, timeout=30)
+                resp = self.session.request(
+                    method=method.upper(),
+                    url=url,
+                    params=params,
+                    json=json_body,
+                    headers=headers,
+                    timeout=30,
+                )
                 if resp.status_code == 429:
                     wait = 2 ** attempt
                     self.logger.warning("Rate limited, retrying in %ds...", wait)
                     time.sleep(wait)
                     continue
                 resp.raise_for_status()
+                if not resp.text:
+                    return {}
                 return resp.json()
             except requests.RequestException as exc:
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                     continue
-                self.logger.error("GET %s failed: %s", url, exc)
+                self.logger.error("%s %s failed: %s", method.upper(), url, exc)
                 return None
         return None
 
@@ -235,3 +256,73 @@ class KalshiClient:
         if len(parts) == 2:
             return parts[1]
         return ""
+
+    def can_auth_trade(self) -> bool:
+        return bool(self.private_key and self.api_key_id)
+
+    def auth_preflight_check(self) -> bool:
+        """Validate authenticated portfolio access before live trading."""
+        if not self.can_auth_trade():
+            self.logger.error("Auth preflight failed: missing key id or private key")
+            return False
+        data = self._request(
+            "GET",
+            "/portfolio/orders",
+            params={"limit": "1"},
+            auth=True,
+        )
+        if data is None:
+            self.logger.error("Auth preflight failed: could not query portfolio orders")
+            return False
+        self.logger.info("Auth preflight passed: portfolio API reachable")
+        return True
+
+    def place_order(
+        self,
+        ticker: str,
+        side: str,
+        action: str,
+        count: int,
+        yes_price_cents: int,
+        post_only: bool = False,
+        client_order_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not self.can_auth_trade():
+            self.logger.error("Trading auth not configured (KALSHI_KEY_ID / KALSHI_PRIVATE_KEY_PATH)")
+            return None
+
+        if count <= 0:
+            self.logger.warning("Skipping order with non-positive count: %s", count)
+            return None
+
+        order_id = client_order_id or str(uuid.uuid4())
+        payload = {
+            "ticker": ticker,
+            "client_order_id": order_id,
+            "type": "limit",
+            "action": action.upper(),
+            "side": side.upper(),
+            "count": int(count),
+            "yes_price": int(yes_price_cents),
+            "post_only": bool(post_only),
+        }
+        return self._request("POST", "/portfolio/orders", json_body=payload, auth=True)
+
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        if not self.can_auth_trade():
+            return []
+        data = self._request(
+            "GET",
+            "/portfolio/orders",
+            params={"status": "resting", "limit": "200"},
+            auth=True,
+        )
+        if data is None:
+            return []
+        return data.get("orders", [])
+
+    def cancel_order(self, order_id: str) -> bool:
+        if not self.can_auth_trade():
+            return False
+        data = self._request("DELETE", f"/portfolio/orders/{order_id}", auth=True)
+        return data is not None
